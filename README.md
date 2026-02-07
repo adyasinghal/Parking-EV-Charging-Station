@@ -1,2 +1,12 @@
 # Parking-EV-Charging-Station
-DBMS Project
+
+<!--- Project Description -->
+
+## Functionalities
+
+## Group Members
+- Aditya Singh
+- Adya Singhal
+- Avani Agarwal
+- Bhavya Yadav
+- Manan Raina Kumar
