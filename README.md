@@ -4,6 +4,8 @@
 
 ## Functionalities
 
+## Tech Stack
+
 ## Group Members
 - Aditya Singh
 - Adya Singhal
