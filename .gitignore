@@ -108,3 +108,9 @@ sketch
 # End of https://www.toptal.com/developers/gitignore/api/goland+all,react
 
 .claude
+.env
+CHANGE.md
+docs/
+INIT.*
+VoltPark_Technical_Spec.md
+report.*

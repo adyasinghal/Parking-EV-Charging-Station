@@ -1,0 +1,1069 @@
+
+VoltPark
+Smart City Parking & EV Charging Hub
+
+
+Database Systems Design Project
+Comprehensive Relational Database Schema & Architecture
+
+Aditya Singh
+2410110023 |  as617@snu.edu.in
+
+Adya Singhal
+2410110027  |  as401@snu.edu.in
+
+Avani Agarwal
+2410110089 |  aa467@snu.edu.in
+
+Bhavya Yadav
+2410110101 |  by583@snu.edu.in
+
+Manan Raina Kumar
+2410110194 |  mk979@snu.edu.in
+
+
+
+
+
+1. Project Overview
+VoltPark is a centralized, Database Management System built for the dual challenge of urban parking management and Electric Vehicle (EV) charging infrastructure. As cities face shrinking parking real estate, rising EV adoption, and fragmented management systems – VoltPark bridges the gap between physical space management and resource allocation on a single platform.
+The system enables real-time availability tracking, automated billing driven by energy consumption and dynamic peak-hour pricing, and a unified digital wallet for every user.
+1.1 Problem Statement
+	•	Parking Scarcity: In most Tier-1 cities, drivers spend an average of 17 minutes searching for parking, contributing to 30% of urban traffic congestion (INRIX Global Traffic Scorecard, 2023).
+	•	EV Infrastructure Gap: The International Energy Agency (IEA) projects 145 million EVs on the road by 2030. However, public charging infrastructure remains fragmented, unreliable, and poorly integrated with parking systems.
+1.2 Limitations of Existing Systems
+Here, are the limitations we found in existing systems (like ParkWhiz, ChargePoint, ParkMobile etc.) -
+	•	No physical parking spot reservation with conflict prevention.
+	•	A driver with an EV cannot reserve a charging bay and a parking spot in a single transaction.
+	•	The system does not track energy consumption, nor does it manage hardware (charger) assets.
+	•	Pricing is static and set by lot of operators manually.
+	•	No unified billing engine for combined parking + energy costs.
+1.3 Our Solution
+Traditional Approach
+VoltPark Approach
+Separate parking & EV apps
+Single unified platform for both
+Static flat-rate pricing
+Dynamic peak-load pricing engine
+No energy tracking
+Per-session kWh metering & billing
+Manual status updates
+Trigger-based real-time automation
+No double-booking protection
+ACID-compliant reservation locks
+Siloed user identities
+Unified wallet: parking + charging credits
+No predictive analytics
+High-traffic zone & charger efficiency reports
+
+2. Entity-Relationship Overview
+2.1 Entity Summary
+Table
+Primary Key
+Key Attributes
+Users
+user_id (SERIAL)
+full_name, email, phone, role
+Wallets
+wallet_id (SERIAL)
+user_id (FK), balance, last_updated
+Vehicles
+vehicle_id (SERIAL)
+user_id (FK), license_plate, model, is_ev
+Parking_Zones
+zone_id (SERIAL)
+zone_name, city, total_spots
+Parking_Spots
+spot_id (SERIAL)
+zone_id (FK), spot_code, type, status
+EV_Chargers
+charger_id (SERIAL)
+spot_id (FK), charger_type, power_kw, status
+Pricing_Rules
+rule_id (SERIAL)
+zone_id (FK), is_peak, rate_per_hour, multiplier
+Reservations
+reservation_id (SERIAL)
+spot_id (FK), user_id (FK), start_time, end_time
+Charging_Sessions
+session_id (SERIAL)
+charger_id (FK), vehicle_id (FK), kwh_start, kwh_end
+Billing_Records
+billing_id (SERIAL)
+session_id (FK), user_id (FK), amount, type
+Charger_Error_Log
+error_id (SERIAL)
+charger_id (FK), error_code, logged_at
+Maintenance_Alerts
+alert_id (SERIAL)
+charger_id (FK), reason, resolved_at
+
+2.2 Relationship Map
+	•	Users (1) → Wallets (1)  [One-to-One]
+	•	Users (1) → Vehicles (Many)  [One-to-Many]
+	•	Users (1) → Reservations (Many)  [One-to-Many]
+	•	Parking_Zones (1) → Parking_Spots (Many)  [One-to-Many]
+	•	Parking_Spots (1) → EV_Chargers (0 or 1)  [One-to-Optional-One]
+	•	Parking_Spots (1) → Reservations (Many)  [One-to-Many]
+	•	EV_Chargers (1) → Charging_Sessions (Many)  [One-to-Many]
+	•	Vehicles (Many) ↔ Charging_Sessions (Many) via session records  [Many-to-Many resolved]
+	•	Parking_Zones (1) → Pricing_Rules (Many)  [One-to-Many]
+
+3. Database Design (Tables)
+============================================================
+TABLE: Users
+Stores all registered users (drivers and admins).
+============================================================
+CREATE TABLE Users (
+    user_id       SERIAL PRIMARY KEY,
+    full_name     VARCHAR(120)        NOT NULL,
+    email         VARCHAR(200)        NOT NULL UNIQUE,
+    phone         VARCHAR(20)         UNIQUE,
+    password_hash VARCHAR(255)        NOT NULL,
+    role          VARCHAR(20)         NOT NULL DEFAULT 'Driver'
+                  CHECK (role IN ('Driver', 'Admin', 'Operator')),
+    created_at    TIMESTAMP           NOT NULL DEFAULT NOW()
+);
+
+
+============================================================
+TABLE: Wallets
+One wallet per user. Balance is deducted on session end.
+============================================================
+CREATE TABLE Wallets (
+    wallet_id     SERIAL PRIMARY KEY,
+    user_id       BIGINT UNSIGNED     NOT NULL UNIQUE
+                  REFERENCES Users(user_id) ON DELETE CASCADE,
+    balance       DECIMAL(12, 2)      NOT NULL DEFAULT 0.00
+                  CHECK (balance >= 0),
+    currency      CHAR(3)             NOT NULL DEFAULT 'INR',
+    last_updated  TIMESTAMP           NOT NULL DEFAULT NOW()
+);
+
+
+============================================================
+TABLE: Vehicles
+A user can own multiple vehicles. is_ev flags EV eligibility.
+============================================================
+CREATE TABLE Vehicles (
+    vehicle_id      SERIAL PRIMARY KEY,
+    user_id         BIGINT UNSIGNED NOT NULL
+                    REFERENCES Users(user_id) ON DELETE CASCADE,
+    license_plate   VARCHAR(20)     NOT NULL UNIQUE,
+    make            VARCHAR(60),
+    model           VARCHAR(60),
+    year            SMALLINT        CHECK (year BETWEEN 1990 AND 2100),
+    is_ev           BOOLEAN         NOT NULL DEFAULT FALSE,
+    battery_kw      DECIMAL(6, 2),  -- NULL for non-EV
+    registered_at   TIMESTAMP       NOT NULL DEFAULT NOW()
+);
+
+
+============================================================
+TABLE: Parking_Zones
+Logical groupings of spots (e.g., a mall, airport terminal).
+============================================================
+CREATE TABLE Parking_Zones (
+    zone_id       SERIAL PRIMARY KEY,
+    zone_name     VARCHAR(120)    NOT NULL,
+    city          VARCHAR(80)     NOT NULL,
+    address       TEXT,
+    total_spots   SMALLINT        NOT NULL CHECK (total_spots > 0),
+    is_active     BOOLEAN         NOT NULL DEFAULT TRUE
+);
+
+
+============================================================
+TABLE: Parking_Spots
+A spot can exist without a charger.
+============================================================
+CREATE TABLE Parking_Spots (
+    spot_id       SERIAL PRIMARY KEY,
+    zone_id       BIGINT UNSIGNED NOT NULL
+                  REFERENCES Parking_Zones(zone_id) ON DELETE RESTRICT,
+    spot_code     VARCHAR(20)     NOT NULL,  -- e.g. 'B-04', 'EV-12'
+    floor_level   SMALLINT        DEFAULT 0,
+    type          VARCHAR(20)     NOT NULL DEFAULT 'Standard'
+                  CHECK (type IN ('Standard', 'EV_Enabled', 'Handicapped',
+                                  'Compact', 'Oversized')),
+    status        VARCHAR(20)     NOT NULL DEFAULT 'Available'
+                  CHECK (status IN ('Available', 'Occupied',
+                                    'Reserved', 'Under_Maintenance')),
+    UNIQUE (zone_id, spot_code)
+);
+
+
+============================================================
+TABLE: EV_Chargers
+--  A charger MUST belong to a spot. One spot: at most one charger.
+--  Business rule enforced by UNIQUE(spot_id).
+============================================================
+CREATE TABLE EV_Chargers (
+    charger_id      SERIAL PRIMARY KEY,
+    spot_id         BIGINT UNSIGNED NOT NULL UNIQUE
+                    REFERENCES Parking_Spots(spot_id) ON DELETE RESTRICT,
+    charger_code    VARCHAR(30)     NOT NULL UNIQUE,
+    charger_type    VARCHAR(20)     NOT NULL
+                    CHECK (charger_type IN ('Level1_AC', 'Level2_AC',
+                                            'DC_Fast', 'Ultra_Fast')),
+    power_kw        DECIMAL(6, 2)   NOT NULL CHECK (power_kw > 0),
+    connector_type  VARCHAR(30),    -- CCS, CHAdeMO, Type2, Tesla
+    status          VARCHAR(20)     NOT NULL DEFAULT 'Available'
+                    CHECK (status IN ('Available', 'In_Use', 'Faulted',
+                                      'Under_Maintenance', 'Offline')),
+    installed_at    DATE
+);
+
+
+============================================================
+TABLE: Pricing_Rules
+--  Supports both flat and peak-hour pricing per zone.
+--  is_peak=TRUE rows override base rate during peak windows.
+============================================================
+CREATE TABLE Pricing_Rules (
+    rule_id           SERIAL PRIMARY KEY,
+    zone_id           BIGINT UNSIGNED NOT NULL
+                      REFERENCES Parking_Zones(zone_id) ON DELETE CASCADE,
+    rule_name         VARCHAR(80),
+    is_peak           BOOLEAN         NOT NULL DEFAULT FALSE,
+    peak_start_time   TIME,           -- e.g. '17:00:00'
+    peak_end_time     TIME,           -- e.g. '21:00:00'
+    base_rate_per_hr  DECIMAL(8, 4)   NOT NULL CHECK (base_rate_per_hr >= 0),
+    peak_multiplier   DECIMAL(4, 2)   DEFAULT 1.00
+                      CHECK (peak_multiplier >= 1.00),
+    energy_rate_kwh   DECIMAL(8, 4)   DEFAULT 0.00, -- per kWh charge
+    effective_from    DATE            NOT NULL DEFAULT (CURRENT_DATE),
+    effective_until   DATE
+);
+
+============================================================
+TABLE: Reservations
+Time-bound bookings. EXCLUDE constraint prevents double-booking.
+============================================================
+CREATE TABLE Reservations (
+    reservation_id  SERIAL PRIMARY KEY,
+    spot_id         BIGINT UNSIGNED NOT NULL
+                    REFERENCES Parking_Spots(spot_id) ON DELETE RESTRICT,
+    user_id         BIGINT UNSIGNED NOT NULL
+                    REFERENCES Users(user_id) ON DELETE RESTRICT,
+    vehicle_id      BIGINT UNSIGNED
+                    REFERENCES Vehicles(vehicle_id) ON DELETE SET NULL,
+    start_time      TIMESTAMP       NOT NULL,
+    end_time        TIMESTAMP       NOT NULL,
+    status          VARCHAR(20)     NOT NULL DEFAULT 'Confirmed'
+                    CHECK (status IN ('Confirmed', 'Cancelled',
+                                      'Completed', 'No_Show')),
+    created_at      TIMESTAMP       NOT NULL DEFAULT NOW(),
+    CHECK (end_time > start_time)
+);
+
+
+============================================================
+TABLE: Charging_Sessions
+Core billing entity: kwh_end - kwh_start = energy consumed.
+============================================================
+CREATE TABLE Charging_Sessions (
+    session_id          SERIAL PRIMARY KEY,
+    charger_id          BIGINT UNSIGNED NOT NULL
+                        REFERENCES EV_Chargers(charger_id) ON DELETE RESTRICT,
+    vehicle_id          BIGINT UNSIGNED NOT NULL
+                        REFERENCES Vehicles(vehicle_id) ON DELETE RESTRICT,
+    reservation_id      BIGINT UNSIGNED 
+                        REFERENCES Reservations(reservation_id) ON DELETE SET NULL,
+    plug_in_time        TIMESTAMP       NOT NULL DEFAULT NOW(),
+    plug_out_time       TIMESTAMP,
+    kwh_start           DECIMAL(10, 4)  NOT NULL DEFAULT 0,
+    kwh_end             DECIMAL(10, 4),
+    kwh_consumed        DECIMAL(10, 4)  GENERATED ALWAYS AS
+                        (kwh_end - kwh_start) STORED,
+    status              VARCHAR(20)     NOT NULL DEFAULT 'Active'
+                        CHECK (status IN ('Active', 'Complete', 'Interrupted')),
+    total_cost          DECIMAL(12, 2),  -- populated by trigger on Complete
+    notes               TEXT
+);
+
+============================================================
+TABLE: Billing_Records
+Ledger of all financial transactions.
+============================================================
+CREATE TABLE Billing_Records (
+    billing_id      SERIAL PRIMARY KEY,
+    user_id         BIGINT UNSIGNED NOT NULL
+                    REFERENCES Users(user_id) ON DELETE RESTRICT,
+    session_id      BIGINT UNSIGNED 
+                    REFERENCES Charging_Sessions(session_id) ON DELETE SET NULL,
+    reservation_id  BIGINT UNSIGNED 
+                    REFERENCES Reservations(reservation_id) ON DELETE SET NULL,
+    billing_type    VARCHAR(30)     NOT NULL
+                    CHECK (billing_type IN ('Parking_Fee', 'Energy_Fee',
+                                            'Combined', 'Refund', 'Top_Up')),
+    amount          DECIMAL(12, 2)  NOT NULL,
+    description     TEXT,
+    billed_at       TIMESTAMP       NOT NULL DEFAULT NOW()
+);
+
+============================================================
+TABLE: Charger_Error_Log
+============================================================
+CREATE TABLE Charger_Error_Log (
+    error_id        SERIAL PRIMARY KEY,
+    charger_id      BIGINT UNSIGNED NOT NULL
+                    REFERENCES EV_Chargers(charger_id) ON DELETE CASCADE,
+    error_code      VARCHAR(50)     NOT NULL,
+    error_message   TEXT,
+    logged_at       TIMESTAMP       NOT NULL DEFAULT NOW()
+);
+
+============================================================
+TABLE: Maintenance_Alerts
+============================================================
+CREATE TABLE Maintenance_Alerts (
+    alert_id        SERIAL PRIMARY KEY,
+    charger_id      BIGINT UNSIGNED NOT NULL
+                    REFERENCES EV_Chargers(charger_id) ON DELETE CASCADE,
+    reason          TEXT            NOT NULL,
+    raised_at       TIMESTAMP       NOT NULL DEFAULT NOW(),
+    resolved_at     TIMESTAMP,
+    is_resolved     BOOLEAN         NOT NULL DEFAULT FALSE
+);
+
+
+4. Diagram
+
+
+
+5. Queries
+5.1 Top spending users
+Data obtained from this query can be used for targeted promotions and potentially leaderboard.
+
+SELECT
+    u.full_name,
+    u.email,
+    get_user_total_spend(u.user_id) AS lifetime_spend_inr,
+    w.balance AS wallet_balance_inr,
+    ROUND(get_user_total_spend(u.user_id) / NULLIF(w.balance, 0), 2) AS spend_to_balance_ratio
+FROM Users u
+JOIN Wallets w ON w.user_id = u.user_id
+WHERE u.role = 'Driver'
+ORDER BY lifetime_spend_inr DESC
+LIMIT 5;
+
+5.2 No Show Rate in zone
+Data obtained from this query can be used to re-align resources for improving business metrics.
+
+
+SELECT
+    pz.zone_name,
+    pz.city,
+    COUNT(r.reservation_id) AS total_reservations,
+    SUM(CASE WHEN r.status = 'No_Show' THEN 1 ELSE 0 END) AS no_shows,
+    SUM(CASE WHEN r.status = 'Completed' THEN 1 ELSE 0 END) AS completed,
+    ROUND(
+        SUM(CASE WHEN r.status = 'No_Show' THEN 1 ELSE 0 END)
+        * 100.0 / NULLIF(COUNT(r.reservation_id), 0),
+    2) AS no_show_rate_pct,
+    CASE
+        WHEN SUM(CASE WHEN r.status = 'No_Show' THEN 1 ELSE 0 END)
+             * 100.0 / NULLIF(COUNT(r.reservation_id), 0) > 10
+        THEN 'HIGH RISK'
+        ELSE 'OK'
+    END AS risk_flag
+FROM Reservations r
+JOIN Parking_Spots ps ON ps.spot_id = r.spot_id
+JOIN Parking_Zones pz ON pz.zone_id = ps.zone_id
+GROUP BY pz.zone_id, pz.zone_name, pz.city ORDER BY no_show_rate_pct DESC;
+
+5.3 Parking only users
+Data obtained from this query can be used for targeted campaigning for moving to EV.
+
+SELECT
+    u.full_name,
+    u.email,
+    w.balance AS wallet_balance_inr,
+    COUNT(DISTINCT r.reservation_id) AS parking_reservations,
+    COUNT(DISTINCT cs.session_id) AS ev_sessions
+FROM Users u
+JOIN Wallets w ON w.user_id = u.user_id
+LEFT JOIN Reservations r ON r.user_id = u.user_id AND r.status = 'Completed'
+LEFT JOIN Vehicles v ON v.user_id = u.user_id AND v.is_ev = TRUE
+LEFT JOIN Charging_Sessions cs ON cs.vehicle_id = v.vehicle_id
+WHERE u.role = 'Driver'
+GROUP BY u.user_id, u.full_name, u.email, w.balance
+HAVING ev_sessions = 0 AND parking_reservations > 0
+ORDER BY parking_reservations DESC;
+
+5.4 Overtime sessions
+Checks for users who overstayed their booked window, a common conflict source.
+
+SELECT
+    u.full_name,
+    u.email,
+    r.reservation_id,
+    r.end_time AS reserved_until,
+    cs.plug_out_time AS actual_plug_out,
+    ROUND(TIMESTAMPDIFF(MINUTE, r.end_time, cs.plug_out_time), 0) AS overstay_minutes,
+    cs.total_cost AS session_cost_inr
+FROM Charging_Sessions cs
+JOIN Reservations r ON r.reservation_id = cs.reservation_id
+JOIN Users u ON u.user_id = r.user_id
+WHERE cs.plug_out_time > r.end_time
+    AND cs.status = 'Complete'
+ORDER BY overstay_minutes DESC;
+
+
+5.5 User Session Frequency
+Find the average frequency of returning customers.
+
+WITH session_gaps AS (
+    SELECT
+        v.user_id,
+        cs.plug_in_time,
+        LAG(cs.plug_in_time) OVER (
+            PARTITION BY v.user_id ORDER BY cs.plug_in_time
+        ) AS prev_session_time
+    FROM Charging_Sessions cs
+    JOIN Vehicles v ON v.vehicle_id = cs.vehicle_id
+    WHERE cs.status = 'Complete'
+)
+SELECT
+    u.full_name,
+    u.email,
+    COUNT(*) AS total_sessions,
+    ROUND(AVG(TIMESTAMPDIFF(HOUR, prev_session_time, plug_in_time)) / 24, 1) AS avg_days_between_sessions,
+    MIN(plug_in_time) AS first_session,
+    MAX(plug_in_time) AS last_session
+FROM session_gaps sg
+JOIN Users u ON u.user_id = sg.user_id
+WHERE sg.prev_session_time IS NOT NULL
+GROUP BY u.user_id, u.full_name, u.email
+ORDER BY avg_days_between_sessions ASC;
+
+6. Stored Functions
+6.1 calculate_session_cost() - Dynamic Pricing Function
+Computes the total cost for a session. If the session start time falls within a peak window defined in Pricing_Rules, the peak multiplier is applied to the base rate. Otherwise, the flat base rate is used. The energy charge is always added on top.
+DELIMITER //
+
+CREATE FUNCTION calculate_session_cost(
+    p_zone_id      INT,
+    p_start_time   DATETIME,
+    p_duration_hrs DECIMAL(10, 2),
+    p_kwh_consumed DECIMAL(10, 2)
+) 
+RETURNS DECIMAL(12, 2)
+DETERMINISTIC
+READS SQL DATA
+BEGIN
+    DECLARE v_base_rate      DECIMAL(8, 4);
+    DECLARE v_peak_multiplier DECIMAL(4, 2);
+    DECLARE v_energy_rate    DECIMAL(8, 4);
+    DECLARE v_is_peak        BOOLEAN;
+    DECLARE v_rate           DECIMAL(10, 4);
+    DECLARE v_parking_cost   DECIMAL(12, 2);
+    DECLARE v_energy_cost    DECIMAL(12, 2);
+
+    -- Fetch applicable pricing rule
+    SELECT base_rate_per_hr, peak_multiplier, energy_rate_kwh, is_peak
+    INTO v_base_rate, v_peak_multiplier, v_energy_rate, v_is_peak
+    FROM Pricing_Rules
+    WHERE zone_id = p_zone_id
+      AND (effective_from <= CURRENT_DATE)
+      AND (effective_until IS NULL OR effective_until >= CURRENT_DATE)
+      AND (
+          (is_peak = TRUE AND TIME(p_start_time) BETWEEN peak_start_time AND peak_end_time)
+          OR is_peak = FALSE
+      )
+    ORDER BY is_peak DESC
+    LIMIT 1;
+
+    -- Handle case where no rule is found
+    IF v_base_rate IS NULL THEN
+        RETURN 0.00; -- MySQL doesn't support 'RAISE EXCEPTION' easily in functions
+    END IF;
+
+    -- Apply peak multiplier if applicable
+    SET v_rate = v_base_rate * IF(v_is_peak, v_peak_multiplier, 1.00);
+    
+    SET v_parking_cost = v_rate * p_duration_hrs;
+    SET v_energy_cost  = v_energy_rate * p_kwh_consumed;
+
+    RETURN ROUND(v_parking_cost + v_energy_cost, 2);
+END //
+
+DELIMITER ;
+
+-- Example:
+SELECT calculate_session_cost(1, '2024-07-15 18:00:00', 2.0, 20.5);
+
+
+
+6.2 get_user_total_spend()
+Returns the cumulative amount spent by a user across all debit billing events.
+
+DELIMITER //
+CREATE FUNCTION get_user_total_spend(p_user_id INT)
+RETURNS DECIMAL(12,2)
+DETERMINISTIC READS SQL DATA
+BEGIN
+    DECLARE v_total DECIMAL(12,2) DEFAULT 0.00;
+    SELECT COALESCE(SUM(amount), 0.00) INTO v_total
+    FROM   Billing_Records
+    WHERE  user_id = p_user_id
+      AND  billing_type IN ('Combined','Parking_Fee','Energy_Fee');
+    RETURN v_total;
+END //
+DELIMITER ;
+
+-- Example:
+SELECT full_name, get_user_total_spend(user_id) AS lifetime_spend
+FROM   Users WHERE role = 'Driver';
+
+6.3 is_spot_available()
+Returns 1 (TRUE) if no confirmed reservation overlaps the requested time window for a given spot. Used by sp_make_reservation before every INSERT.
+DELIMITER //
+CREATE FUNCTION is_spot_available(
+    p_spot_id INT,
+    p_start   DATETIME,
+    p_end     DATETIME
+)
+RETURNS TINYINT(1)
+DETERMINISTIC READS SQL DATA
+BEGIN
+    DECLARE v_count INT DEFAULT 0;
+    SELECT COUNT(*) INTO v_count
+    FROM   Reservations
+    WHERE  spot_id = p_spot_id AND status = 'Confirmed'
+      AND  NOT (end_time <= p_start OR start_time >= p_end);
+    RETURN (v_count = 0);
+END //
+DELIMITER ;
+
+-- Example:
+SELECT is_spot_available(1, '2024-08-01 10:00:00', '2024-08-01 12:00:00');
+
+
+
+7. Stored Procedures 
+7.1 sp_make_reservation() - Validated Booking
+Performs three validation checks before inserting a reservation: 
+	•	spot is not under maintenance 
+	•	no conflicting confirmed booking exists in the time window 
+	•	user has sufficient wallet balance. 
+
+DELIMITER //
+CREATE PROCEDURE sp_make_reservation(
+    IN p_spot_id    INT,
+    IN p_user_id    INT,
+    IN p_vehicle_id INT,
+    IN p_start      DATETIME,
+    IN p_end        DATETIME
+)
+BEGIN
+    DECLARE v_status    VARCHAR(30);
+    DECLARE v_balance   DECIMAL(12,2);
+    DECLARE v_available TINYINT(1);
+
+    -- 1. Check spot is not under maintenance
+    SELECT status INTO v_status FROM Parking_Spots WHERE spot_id = p_spot_id;
+    IF v_status = 'Under_Maintenance' THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT = 'Spot is under maintenance.';
+    END IF;
+
+    -- 2. Check time-window availability
+    SET v_available = is_spot_available(p_spot_id, p_start, p_end);
+    IF v_available = 0 THEN
+        SIGNAL SQLSTATE '45001'
+            SET MESSAGE_TEXT = 'Spot already booked for this window.';
+    END IF;
+
+    -- 3. Check minimum wallet balance
+    SELECT balance INTO v_balance FROM Wallets WHERE user_id = p_user_id;
+    IF v_balance < 50 THEN
+        SIGNAL SQLSTATE '45002'
+            SET MESSAGE_TEXT = 'Insufficient balance (min INR 50 required).';
+    END IF;
+
+    -- 4. Insert reservation and mark spot as Reserved
+    INSERT INTO Reservations (spot_id, user_id, vehicle_id, start_time, end_time)
+    VALUES (p_spot_id, p_user_id, p_vehicle_id, p_start, p_end);
+
+    UPDATE Parking_Spots SET status = 'Reserved' WHERE spot_id = p_spot_id;
+
+    SELECT 'Reservation confirmed.' AS result, LAST_INSERT_ID() AS reservation_id;
+END //
+DELIMITER ;
+
+-- Example:
+CALL sp_make_reservation(3, 2, 3, '2024-08-01 10:00:00', '2024-08-01 12:00:00');
+
+7.2 sp_end_charging_session() 
+Marks a session Complete, computes cost using calculate_session_cost(), deducts wallet, logs a Billing_Record, and frees both the charger and the spot.
+
+DELIMITER //
+CREATE PROCEDURE sp_end_charging_session(
+    IN p_session_id INT,
+    IN p_kwh_end    DECIMAL(10,4),
+    IN p_plug_out   DATETIME
+)
+BEGIN
+    DECLARE v_charger_id INT;
+    DECLARE v_vehicle_id INT;
+    DECLARE v_plug_in    DATETIME;
+    DECLARE v_kwh_start  DECIMAL(10,4);
+    DECLARE v_zone_id    INT;
+    DECLARE v_spot_id    INT;
+    DECLARE v_user_id    INT;
+    DECLARE v_dur_hrs    DECIMAL(10,4);
+    DECLARE v_kwh_used   DECIMAL(10,4);
+    DECLARE v_cost       DECIMAL(12,2);
+
+    -- Load active session
+    SELECT charger_id, vehicle_id, plug_in_time, kwh_start
+    INTO   v_charger_id, v_vehicle_id, v_plug_in, v_kwh_start
+    FROM   Charging_Sessions
+    WHERE  session_id = p_session_id AND status = 'Active';
+
+    IF v_charger_id IS NULL THEN
+        SIGNAL SQLSTATE '45003'
+            SET MESSAGE_TEXT = 'No active session found.';
+    END IF;
+
+    -- Resolve zone, spot, user
+    SELECT ps.zone_id, ps.spot_id INTO v_zone_id, v_spot_id
+    FROM EV_Chargers ec JOIN Parking_Spots ps ON ps.spot_id = ec.spot_id
+    WHERE ec.charger_id = v_charger_id;
+
+    SELECT user_id INTO v_user_id FROM Vehicles WHERE vehicle_id = v_vehicle_id;
+
+    -- Compute duration and cost
+    SET v_dur_hrs  = TIMESTAMPDIFF(SECOND, v_plug_in, p_plug_out) / 3600.0;
+    SET v_kwh_used = COALESCE(p_kwh_end - v_kwh_start, 0);
+    SET v_cost     = calculate_session_cost(v_zone_id, v_plug_in,
+                                            v_dur_hrs, v_kwh_used);
+
+    -- Update session, deduct wallet, log billing, free resources
+    UPDATE Charging_Sessions
+    SET kwh_end=p_kwh_end, plug_out_time=p_plug_out,
+        status='Complete', total_cost=v_cost
+    WHERE session_id = p_session_id;
+
+    UPDATE Wallets SET balance = balance - v_cost WHERE user_id = v_user_id;
+
+    INSERT INTO Billing_Records (user_id, session_id, billing_type, amount, description)
+    VALUES (v_user_id, p_session_id, 'Combined', v_cost,
+            CONCAT('Session ', p_session_id, ': ', ROUND(v_dur_hrs,2),
+                   ' hrs, ', v_kwh_used, ' kWh'));
+
+    UPDATE EV_Chargers   SET status='Available' WHERE charger_id = v_charger_id;
+    UPDATE Parking_Spots SET status='Available' WHERE spot_id    = v_spot_id;
+
+    SELECT 'Session closed.' AS result, v_cost AS total_charged_inr;
+END //
+DELIMITER ;
+
+-- Example:
+CALL sp_end_charging_session(5, 38.50, '2024-07-19 19:15:00');
+
+7.3 sp_top_up_wallet()
+Credits a user's wallet and inserts a Top_Up billing record. Validates that the amount is positive and the wallet exists.
+
+DELIMITER //
+CREATE PROCEDURE sp_top_up_wallet(
+    IN p_user_id INT,
+    IN p_amount  DECIMAL(12,2)
+)
+BEGIN
+    IF p_amount <= 0 THEN
+        SIGNAL SQLSTATE '45004'
+            SET MESSAGE_TEXT = 'Top-up amount must be positive.';
+    END IF;
+
+    UPDATE Wallets SET balance = balance + p_amount WHERE user_id = p_user_id;
+
+    IF ROW_COUNT() = 0 THEN
+        SIGNAL SQLSTATE '45005'
+            SET MESSAGE_TEXT = 'Wallet not found for this user.';
+    END IF;
+
+    INSERT INTO Billing_Records (user_id, billing_type, amount, description)
+    VALUES (p_user_id, 'Top_Up', p_amount,
+            CONCAT('Wallet credited INR ', p_amount));
+
+    SELECT 'Top-up successful.' AS result, p_amount AS credited_inr;
+END //
+DELIMITER ;
+
+-- Example:
+CALL sp_top_up_wallet(4, 500.00);
+
+
+7.4 sp_cancel_reservation()
+Cancels a confirmed reservation, freeing the spot back to 'Available'. Returns an error if the reservation is not in 'Confirmed' state.
+
+DELIMITER //
+CREATE PROCEDURE sp_cancel_reservation(
+    IN p_reservation_id INT,
+    IN p_user_id        INT
+)
+BEGIN
+    DECLARE v_spot_id INT;
+    DECLARE v_status  VARCHAR(20);
+
+    SELECT spot_id, status INTO v_spot_id, v_status
+    FROM   Reservations
+    WHERE  reservation_id = p_reservation_id AND user_id = p_user_id;
+
+    IF v_spot_id IS NULL THEN
+        SIGNAL SQLSTATE '45006'
+            SET MESSAGE_TEXT = 'Reservation not found for this user.';
+    END IF;
+
+    IF v_status != 'Confirmed' THEN
+        SIGNAL SQLSTATE '45007'
+            SET MESSAGE_TEXT = 'Only Confirmed reservations can be cancelled.';
+    END IF;
+
+    UPDATE Reservations  SET status = 'Cancelled' WHERE reservation_id = p_reservation_id;
+    UPDATE Parking_Spots SET status = 'Available' WHERE spot_id = v_spot_id AND status = 'Reserved';
+
+    SELECT 'Reservation cancelled.' AS result;
+END //
+DELIMITER ;
+
+7.5 sp_charger_utilization()
+Computes what percentage of available time each charger was actively in use over the last N days
+
+DELIMITER //
+ 
+CREATE PROCEDURE sp_charger_utilization(
+    IN p_days INT
+)
+READS SQL DATA
+BEGIN
+    DECLARE v_window_minutes DECIMAL(18, 2);
+ 
+    IF p_days IS NULL OR p_days <= 0 THEN
+        SET p_days = 30;
+    END IF;
+ 
+    SET v_window_minutes = p_days * 24 * 60;
+ 
+    SELECT
+        ec.charger_id,
+        ec.charger_code,
+        ec.charger_type,
+        ec.power_kw,
+        ec.status AS current_status,
+        COUNT(cs.session_id) AS total_sessions,
+        ROUND(
+            SUM(
+                TIMESTAMPDIFF(MINUTE, cs.plug_in_time, cs.plug_out_time)
+            ) / v_window_minutes * 100,
+        2) AS utilization_pct,
+        ROUND(AVG(cs.kwh_consumed), 3) AS avg_kwh_per_session,
+        ROUND(SUM(cs.total_cost), 2) AS revenue_in_window_inr
+    FROM EV_Chargers ec
+    LEFT JOIN Charging_Sessions cs
+        ON  cs.charger_id = ec.charger_id
+        AND cs.plug_in_time >= DATE_SUB(NOW(), INTERVAL p_days DAY)
+        AND cs.status = 'Complete'
+    GROUP BY ec.charger_id, ec.charger_code, ec.charger_type, ec.power_kw, ec.status
+    ORDER BY utilization_pct DESC;
+END //
+ 
+DELIMITER ;
+
+7.6 sp_maintenance_risk_alerts()
+Surfaces chargers that are NOT yet flagged as Under_Maintenance but have accumulated >= 2 errors in the last 7 days.
+
+DELIMITER //
+ 
+CREATE PROCEDURE sp_maintenance_risk_alerts()
+READS SQL DATA
+BEGIN
+    SELECT
+        ec.charger_id,
+        ec.charger_code,
+        ec.charger_type,
+        ec.status AS current_status,
+        COUNT(DISTINCT cel.error_id) AS errors_last_7_days,
+        COUNT(DISTINCT cs.session_id) AS sessions_last_7_days,
+        MAX(cel.logged_at) AS last_error_at,
+        MAX(cel.error_code) AS latest_error_code
+    FROM EV_Chargers ec
+    LEFT JOIN Charger_Error_Log cel
+        ON  cel.charger_id = ec.charger_id
+        AND cel.logged_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+    LEFT JOIN Charging_Sessions cs
+        ON  cs.charger_id    = ec.charger_id
+        AND cs.plug_in_time >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+    WHERE ec.status != 'Under_Maintenance'
+    GROUP BY ec.charger_id, ec.charger_code, ec.charger_type, ec.status
+    HAVING errors_last_7_days >= 2
+    ORDER BY errors_last_7_days DESC;
+END //
+ 
+DELIMITER ;
+
+7.7 sp_hourly_demand_heatmap
+Aggregates charging sessions by hour of day to reveal platform-wide usage patterns and validate peak-hour pricing window decisions.
+
+DELIMITER //
+ 
+CREATE PROCEDURE sp_hourly_demand_heatmap()
+READS SQL DATA
+BEGIN
+    SELECT
+        HOUR(cs.plug_in_time)                                           AS hour_of_day,
+        -- Label each hour block for readability
+        CONCAT(
+            LPAD(HOUR(cs.plug_in_time), 2, '0'), ':00 - ',
+            LPAD(HOUR(cs.plug_in_time) + 1, 2, '0'), ':00'
+        ) AS time_window,
+        COUNT(cs.session_id) AS sessions_started,
+        ROUND(AVG(cs.kwh_consumed), 3) AS avg_kwh,
+        ROUND(SUM(cs.total_cost), 2) AS total_revenue_inr,
+        ROUND(
+            AVG(TIMESTAMPDIFF(MINUTE, cs.plug_in_time, cs.plug_out_time)),
+        1) AS avg_session_duration_min
+    FROM Charging_Sessions cs
+    WHERE cs.status = 'Complete'
+      AND cs.plug_out_time IS NOT NULL
+    GROUP BY HOUR(cs.plug_in_time)
+    ORDER BY hour_of_day;
+END //
+DELIMITER ;
+
+
+8. Triggers 
+8.1 trg_wallet_overdraft - BEFORE UPDATE on Wallets
+Blocks any UPDATE that would bring a wallet balance below zero. 
+
+DELIMITER //
+CREATE TRIGGER trg_wallet_overdraft
+BEFORE UPDATE ON Wallets
+FOR EACH ROW
+BEGIN
+    IF NEW.balance < 0 THEN
+        SIGNAL SQLSTATE '45000'
+            SET MESSAGE_TEXT =
+                'ERROR: Insufficient wallet balance — transaction blocked.';
+    END IF;
+END //
+DELIMITER ;
+
+8.2 trg_session_start - AFTER INSERT on Charging_Sessions
+When a new charging session is created, this trigger automatically marks the charger as 'In_Use' and the corresponding parking spot as 'Occupied', keeping statuses in sync.
+
+DELIMITER //
+CREATE TRIGGER trg_session_start
+AFTER INSERT ON Charging_Sessions
+FOR EACH ROW
+BEGIN
+    UPDATE EV_Chargers SET status = 'In_Use'
+    WHERE  charger_id = NEW.charger_id;
+
+    UPDATE Parking_Spots SET status = 'Occupied'
+    WHERE  spot_id = (
+        SELECT spot_id FROM EV_Chargers WHERE charger_id = NEW.charger_id
+    );
+END //
+DELIMITER ;
+
+8.3 trg_charger_alert - AFTER INSERT on Charger_Error_Log
+Monitors charger health in real time. If the same charger_id accumulates 3 or more errors within the past 24 hours, this trigger automatically sets the charger status to 'Under_Maintenance' and inserts a Maintenance_Alert record.
+
+DELIMITER //
+CREATE TRIGGER trg_charger_alert
+AFTER INSERT ON Charger_Error_Log
+FOR EACH ROW
+BEGIN
+    DECLARE v_count INT;
+
+    SELECT COUNT(*) INTO v_count
+    FROM   Charger_Error_Log
+    WHERE  charger_id = NEW.charger_id
+      AND  logged_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR);
+
+    IF v_count >= 3 THEN
+        UPDATE EV_Chargers
+        SET    status = 'Under_Maintenance'
+        WHERE  charger_id = NEW.charger_id;
+
+        INSERT INTO Maintenance_Alerts (charger_id, reason)
+        VALUES (NEW.charger_id,
+                CONCAT('Auto-raised: ', v_count,
+                       ' errors in 24h. Latest: ', NEW.error_code));
+    END IF;
+END //
+DELIMITER ;
+8.4 trg_create_wallet - AFTER INSERT ON Users
+Every user must have a wallet for the balance to be deducted after the session. A wallet is automatically created every time a new user is inserted with balance 0.00.
+
+DELIMITER //
+CREATE TRIGGER trg_create_wallet
+AFTER INSERT ON Users
+FOR EACH ROW
+BEGIN
+    INSERT INTO Wallets (user_id, balance, currency)
+    VALUES (NEW.user_id, 0.00, 'INR');
+END //
+DELIMITER ;
+
+9. Analytics & Views
+9.1 High Traffic Zones
+CREATE VIEW vw_high_traffic_zones AS
+SELECT
+    pz.zone_id,
+    pz.zone_name,
+    pz.city,
+    COUNT(cs.session_id)                               AS total_sessions,
+    ROUND(AVG(TIMESTAMPDIFF(MINUTE,
+        cs.plug_in_time, cs.plug_out_time)) / 60, 2)  AS avg_session_hrs,
+    ROUND(SUM(cs.kwh_consumed), 2)                    AS total_kwh_delivered,
+    ROUND(SUM(cs.total_cost),   2)                    AS total_revenue
+FROM   Parking_Zones     pz
+JOIN   Parking_Spots     ps  ON ps.zone_id    = pz.zone_id
+JOIN   EV_Chargers       ec  ON ec.spot_id    = ps.spot_id
+JOIN   Charging_Sessions cs  ON cs.charger_id = ec.charger_id
+WHERE  cs.status = 'Complete'
+GROUP  BY pz.zone_id, pz.zone_name, pz.city
+ORDER  BY total_sessions DESC;
+
+9.2 Charger Efficiency Report
+CREATE VIEW vw_charger_efficiency AS
+SELECT
+    ec.charger_id,
+    ec.charger_code,
+    ec.charger_type,
+    ec.power_kw,
+    ec.status,
+    COUNT(DISTINCT cs.session_id)                       AS total_sessions,
+    ROUND(AVG(cs.kwh_consumed), 3)                      AS avg_kwh_per_session,
+    COUNT(DISTINCT cel.error_id)                        AS total_errors,
+    COUNT(DISTINCT ma.alert_id)                         AS maintenance_count,
+    CASE WHEN COUNT(DISTINCT cs.session_id) = 0 THEN 0
+         ELSE ROUND(COUNT(DISTINCT cel.error_id) /
+                    COUNT(DISTINCT cs.session_id) * 100, 2)
+    END                                                 AS error_rate_pct
+FROM   EV_Chargers           ec
+LEFT JOIN Charging_Sessions  cs  ON cs.charger_id  = ec.charger_id
+LEFT JOIN Charger_Error_Log  cel ON cel.charger_id = ec.charger_id
+LEFT JOIN Maintenance_Alerts ma  ON ma.charger_id  = ec.charger_id
+GROUP  BY ec.charger_id, ec.charger_code, ec.charger_type, ec.power_kw, ec.status
+ORDER  BY error_rate_pct DESC;
+
+10. Normalization Justification
+The schema satisfies normal forms:
+A. Users
+Attributes: user_id, full_name, email, phone, password_hash, role, created_at
+Functional Dependencies:
+	•	user_id → full_name, email, phone, password_hash, role, created_at
+	•	email → user_id, full_name, phone, password_hash, role, created_at
+	•	phone → user_id
+
+Highest Normal Form: BCNF 
+All determinants user_id, email and phone are candidate keys. No non-key attribute determines another non-key attribute. No partial or transitive dependencies.
+
+B.Wallets
+Attributes: wallet_id, user_id, balance, currency, last_updated
+Functional Dependencies:
+	•	wallet_id → user_id, balance, currency, last_updated
+	•	user_id → wallet_id, balance, currency, last_updated 
+
+Highest Normal Form: BCNF 
+Both wallet_id and user_id are candidate keys. Every FD has a candidate key as its determinant.
+
+
+C.Vehicles
+Attributes: vehicle_id, user_id, license_plate, make, model, year, is_ev, battery_kw, registered_at
+Functional Dependencies: 
+	•	vehicle_id → user_id, license_plate, make, model, year, is_ev, battery_kw, registered_at
+	•	license_plate → vehicle_id (UNIQUE)
+	•	is_ev = FALSE → battery_kw is NULL 
+
+Highest Normal Form: BCNF.
+Both vehicle_id and license_plate are candidate keys. No non-key attribute determines any other non-key attribute (battery_kw depending on is_ev is a domain constraint/NULL rule, not a functional dependency in the relational sense.).
+D. Parking_Zones
+Attributes: zone_id, zone_name, city, address, total_spots, is_active
+Functional Dependencies:
+	•	zone_id → zone_name, city, address, total_spots, is_active
+
+Highest Normal Form: BCNF. 
+Single candidate key which is zone_id. All non-key attributes depend solely on it. No transitive dependencies , city and address are properties of the zone, not derivable from each other.
+
+E. Parking_Spots
+Attributes: spot_id, zone_id, spot_code, floor_level, type, status
+Functional Dependencies:
+	•	spot_id → zone_id, spot_code, floor_level, type, status
+	•	(zone_id, spot_code) → spot_id, floor_level, type, status (UNIQUE constraint = candidate key)
+
+Highest Normal Form: BCNF. 
+Two candidate keys: spot_id and (zone_id, spot_code). Every non-key attribute depends on both candidate keys fully. No transitive dependency,floor_level, type, status are all direct properties of the spot.
+
+ F. EV_Chargers
+Attributes: charger_id, spot_id, charger_code, charger_type, power_kw, connector_type, status, installed_at
+Functional Dependencies:
+	•	charger_id → spot_id, charger_code, charger_type, power_kw, connector_type, status, installed_at
+	•	spot_id → charger_id (UNIQUE  candidate key)
+	•	charger_code → charger_id (UNIQUE candidate key)
+
+Highest Normal Form: BCNF.
+Three candidate keys, charger_id, spot_id, charger_code. All non-key attributes depend only on these candidate keys with no transitive dependencies.
+
+G. Pricing_Rules
+Attributes: rule_id, zone_id, rule_name, is_peak, peak_start_time, peak_end_time, base_rate_per_hr, peak_multiplier, energy_rate_kwh, effective_from, effective_until
+Functional Dependencies:
+	•	rule_id → all other attributes
+	•	is_peak = FALSE → peak_start_time and peak_end_time are NULL (domain constraint)
+	•	peak_multiplier is only meaningful when is_peak = TRUE (domain constraint)
+
+Highest Normal Form: 3NF.
+Candidate key is rule_id. The soft dependency of peak_start_time/peak_end_time on is_peak is a business constraint, not a true relational FD (NULL values don't constitute a functional dependency). 
+
+H. Reservations
+Attributes: reservation_id, spot_id, user_id, vehicle_id, start_time, end_time, status, created_at
+Functional Dependencies:
+	•	reservation_id → spot_id, user_id, vehicle_id, start_time, end_time, status, created_at
+
+Highest Normal Form: BCNF.
+Single candidate key which is reservation_id. All attributes depend directly on it. No non-key attribute is derivable from another non-key attribute ,e.g., status is not determined by start_time/end_time (it's set manually/by trigger).
+
+I. Charging_Sessions
+Attributes: session_id, charger_id, vehicle_id, reservation_id, plug_in_time, plug_out_time, kwh_start, kwh_end, kwh_consumed (generated), status, total_cost, notes
+Functional Dependencies:
+	•	session_id → all attributes
+	•	kwh_consumed is functionally determined by kwh_end − kwh_start (stored generated column, not a violation, it's a physical optimization of a pure derivation)
+
+Highest Normal Form: BCNF.
+Single candidate key which is session_id. The generated column kwh_consumed is a stored computation, not a transitive dependency from a non-key attribute. total_cost is populated by procedure on completion, a controlled denormalization for performance, not a normalization violation.
+
+J. Billing_Records
+Attributes: billing_id, user_id, session_id, reservation_id, billing_type, amount, description, billed_at
+Functional Dependencies:
+	•	billing_id → user_id, session_id, reservation_id, billing_type, amount, description, billed_at
+
+Highest Normal Form: BCNF.
+Single candidate key which is billing_id. All attributes depend directly on it. user_id, session_id, and reservation_id are foreign keys, not determinants. They reference other tables but do not functionally determine any other attribute in this table. billing_type and amount are independent facts about the transaction, neither derives from the other.
+
+K. Charger_Error_Log
+Attributes: error_id, charger_id, error_code, error_message, logged_at
+Functional Dependencies:
+	•	error_id → charger_id, error_code, error_message, logged_at
+
+Highest Normal Form: BCNF.
+Single candidate key which is error_id. All attributes depend solely and directly on it. No transitive dependencies.
+
+L. Maintenance_Alerts
+Attributes: alert_id, charger_id, reason, raised_at, resolved_at, is_resolved
+Functional Dependencies:
+	•	alert_id → charger_id, reason, raised_at, resolved_at, is_resolved
+	•	Soft dependency: resolved_at is NULL when is_resolved = FALSE (domain constraint, not an functional dependency)
+
+Highest Normal Form: BCNF.	
+Single candidate key which is alert_id. All attributes depend solely on it.
+
+
+
+
+
