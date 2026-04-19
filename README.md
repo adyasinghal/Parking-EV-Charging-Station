@@ -2,7 +2,7 @@
 
 **VoltPark** is a full-stack EV charging station management system built as a DBMS project. It provides a web interface for managing charging stations, sessions, and users.  
 
-## Tech Stack
+## Tech Stack  
 
 | Layer | Technology |
 |-------|-----------|
