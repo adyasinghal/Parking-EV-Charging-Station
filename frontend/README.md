@@ -1,72 +1,99 @@
 # VoltPark Frontend
 
-Frontend implementation for VoltPark using React + TypeScript + Vite.
+React + TypeScript frontend for VoltPark.
 
-## Implemented
+## Tech Stack
 
-### Frontend Phase 1 (done)
+- React 19
+- TypeScript
+- React Router
+- Zustand
+- Axios
+- Vitest + Testing Library
+- ESLint
 
-- Auth flow (`/login`, `/register`) with persisted Zustand auth store
-- Protected routing and admin-only route guard
-- API client with JWT interceptor and 401 logout handling
-- Driver pages:
-  - `/dashboard`
-  - `/zones`, `/zones/:id`
-  - `/reservations`
-  - `/wallet`
-  - `/vehicles`
-  - `/sessions`
-- Admin pages:
-  - `/admin/users`
-  - `/admin/maintenance`
+## Prerequisites
 
-### Frontend Phase 2 (done)
+- Node.js (Node 20+ is recommended)
+- npm
 
-- Analytics API module and typed analytics responses
-- Admin analytics page:
-  - `/admin/analytics`
-- SSE hooks/store for live updates:
-  - Spot stream integrated in `ZoneDetailPage`
-  - Charger stream consumed by `AnalyticsPage`
-
-## Environment
-
-Create `.env` from `.env.example`:
+## Quick Start
 
 ```bash
-cp .env.example .env
-```
-
-Default API URL:
-
-- `VITE_API_URL=http://localhost:8080/api/v1`
-
-## Run
-
-```bash
+cd VoltPark/frontend
 npm install
+cp .env.example .env
 npm run dev
 ```
 
-## Build
+The Vite dev server runs on its default port unless overridden.
 
-```bash
-npm run build
+## Environment Variables
+
+`frontend/.env.example` defines:
+
+```dotenv
+VITE_API_URL=http://localhost:8080/api/v1
 ```
 
-## Final phase quality checks
+Set `VITE_API_URL` to your backend API base URL.
+
+## Available Scripts
+
+```bash
+npm run dev
+npm run build
+npm run preview
+npm run lint
+npm run test
+npm run test:run
+```
+
+- `dev`: start Vite development server
+- `build`: type-check and create production build in `dist/`
+- `preview`: serve the production build locally
+- `lint`: run ESLint
+- `test`: run Vitest in watch mode
+- `test:run`: run Vitest once (CI-style)
+
+## App Routes
+
+Public routes:
+
+- `/`
+- `/login`
+- `/register`
+
+Authenticated routes:
+
+- `/dashboard`
+- `/zones`
+- `/zones/:id`
+- `/reservations`
+- `/reservations/new`
+- `/reservations/:id`
+- `/chargers`
+- `/chargers/:id`
+- `/wallet`
+- `/vehicles`
+- `/sessions`
+
+Admin-only routes:
+
+- `/admin/users`
+- `/admin/users/:id`
+- `/admin/maintenance`
+- `/admin/topup-requests`
+- `/admin/billing`
+- `/admin/analytics`
+- `/admin/pricing`
+
+## Testing and Quality Checks
+
+Run the standard local checks:
 
 ```bash
 npm run lint
 npm run test:run
 npm run build
 ```
-
-## Deployment runbook
-
-See `../docs/deployment_runbook.md` for full-stack Docker startup and validation.
-
-## Notes
-
-- Frontend is now aligned with backend through phase 5 (`analytics` + `sse`).
-- Next step is UX polish + chart components + testing coverage.
